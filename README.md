@@ -1,266 +1,282 @@
-# RISC-V Single-Cycle com MMIO
+# 🖥️ RISC-V MMIO — Contador com Botões
 
-Implementação em SystemVerilog de um processador RISC-V RV32I single-cycle com suporte a Memory-Mapped I/O (MMIO), baseada no Capítulo 4 de *Patterson & Hennessy — Computer Organization and Design (RISC-V Edition)*. Alvo: placa **DE2-115** (Intel Cyclone IV E, EP4CE115F29C7, 50 MHz).
+<div align="center">
 
----
+![SystemVerilog](https://img.shields.io/badge/SystemVerilog-HDL-blue?style=for-the-badge)
+![UFPE](https://img.shields.io/badge/UFPE-CIn-red?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-acadêmico-lightgrey?style=for-the-badge)
+![RISC-V](https://img.shields.io/badge/RISC--V-Assembly-green?style=for-the-badge)
 
-## Sumário
+**Projeto acadêmico desenvolvido para a disciplina de Laboratório de Organização e Arquitetura de Computadores (CIN0012) — CIn/UFPE (2026)**
 
-1. [Compilando um programa com o assembler](#compilando-um-programa-com-o-assembler)
-2. [Organização do MMIO](#organização-do-mmio)
-3. [Arquitetura](#arquitetura)
-4. [Instruções suportadas](#instruções-suportadas)
-5. [Sinais de controle](#sinais-de-controle)
-6. [Síntese no Quartus](#síntese-no-quartus)
-7. [Simulação no ModelSim](#simulação-no-modelsim)
+</div>
 
 ---
 
-## Compilando um programa com o assembler
+## 📌 Sobre o Projeto
 
-O script `assembler/assembler.py` traduz um arquivo de texto com instruções RISC-V para um arquivo `.mif` no formato que o Quartus usa para inicializar a memória de instruções na FPGA.
+Implementação de um **contador de 9 bits controlado por botões** rodando em um **processador RISC-V single-cycle** implementado em **SystemVerilog**, gravado em uma FPGA **DE2-115 (Altera Cyclone IV E)**.
 
-### 1. Escreva o programa em `assembler/instructions.txt`
+O sistema é composto por:
+- Um processador RISC-V completo (single-cycle) implementado em hardware
+- Memória de instruções e memória de dados
+- Interface de **Entrada e Saída Mapeada em Memória (MMIO)** para chaves, botões e LEDs
+- Um programa em **assembly RISC-V** que implementa o contador com detecção de borda
 
-Uma instrução por linha, sem rótulos. Formatos aceitos:
+---
 
-```
-<instr> <rd>,<rs1>,<rs2>        # R-type  (ex: add  x3,x1,x2)
-<instr> <rd>,<rs1>,<imm>        # I-type  (ex: addi x1,x0,8)
-<instr> <rd>,<imm>(<rs1>)       # Load    (ex: lw   x2,0(x1))
-<instr> <rs2>,<imm>(<rs1>)      # Store   (ex: sw   x2,8(x1))
-<instr> <rs1>,<rs2>,<imm>       # Branch  (ex: beq  x0,x0,-8)
-<instr> <rd>,<imm>              # U / J   (ex: lui  x1,1)
-```
-
-**Exemplo** — espelhar SW nos LEDR continuamente:
+## 📁 Estrutura do Projeto
 
 ```
-lw x1,0(x0)
-lw x2,0(x1)
-sw x2,8(x1)
-beq x0,x0,-8
+rv_sc_cpu_mmio/
+├── sc_top.sv           # Topo: conecta CPU aos pinos físicos da FPGA
+├── sc_cpu.sv           # CPU: une controle + datapath
+├── sc_control.sv       # Unidade de controle (decodifica opcode)
+├── sc_datapath.sv      # Datapath: fluxo de dados do processador
+├── sc_imem.sv          # Memória de instruções (ROM)
+├── sc_dmem.sv          # Memória de dados (RAM)
+├── sc_mmio.sv          # Controlador MMIO (SW, KEY, LEDR, LEDG)
+├── sc_regfile.sv       # Banco de registradores (32 x 32 bits)
+├── sc_alu.sv           # Unidade Lógica e Aritmética
+├── sc_alu_ctrl.sv      # Controle da ALU
+├── sc_sign_ext.sv      # Extensor de sinal
+├── sc_cpu_tb.sv        # Testbench para simulação no ModelSim
+├── pll_10mhz.v         # PLL: converte 50 MHz → 10 MHz
+├── data.mif            # Inicialização da memória de dados
+├── assembler/
+│   ├── assembler.py    # Montador: assembly → instruction.mif
+│   └── instructions.txt# Programa assembly do contador
+├── modelsim/
+│   ├── program.hex     # Programa de teste para simulação
+│   ├── data.hex        # Dados de teste para simulação
+│   └── golden.txt      # Saída esperada para verificação
+└── quartus/
+    └── sc_top.sdc      # Constraints de timing
 ```
 
-### 2. Execute o assembler
+| Arquivo | Descrição |
+|---------|-----------|
+| [`sc_top.sv`](sc_top.sv) | Módulo de topo — pinos físicos da DE2-115 |
+| [`sc_datapath.sv`](sc_datapath.sv) | Núcleo do processador — fluxo de dados |
+| [`sc_control.sv`](sc_control.sv) | Unidade de controle — decodifica instruções |
+| [`sc_mmio.sv`](sc_mmio.sv) | Interface com periféricos via MMIO |
+| [`assembler/instructions.txt`](assembler/instructions.txt) | Programa assembly do contador |
+| [`data.mif`](data.mif) | Constantes inicializadas na memória de dados |
+
+---
+
+## 🏗️ Arquitetura do Sistema
+
+```
+                    ┌─────────────────────────────────┐
+                    │           sc_top.sv             │
+                    │   (pinos físicos da DE2-115)    │
+                    │                                 │
+                    │  ┌──────────────────────────┐   │
+                    │  │        sc_cpu.sv         │   │
+                    │  │                          │   │
+                    │  │  sc_control  sc_datapath │   │
+                    │  └──────────────────────────┘   │
+                    └─────────────────────────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              │                    │                    │
+        ┌──────────┐         ┌──────────┐        ┌──────────┐
+        │ sc_imem  │         │ sc_dmem  │        │ sc_mmio  │
+        │(programa)│         │ (dados)  │        │(periféri-│
+        └──────────┘         └──────────┘        │   cos)   │
+                                                 └──────────┘
+```
+
+O processador implementa o conjunto de instruções RISC-V RV32I (subconjunto), baseado no modelo single-cycle do livro *Patterson & Hennessy — Computer Organization and Design (RISC-V Edition)*.
+
+---
+
+## 🗺️ Mapa de Memória MMIO
+
+| Endereço | Periférico | Operação | Descrição |
+|----------|-----------|----------|-----------|
+| `0x400`  | `SW[17:0]` | Leitura  | 18 chaves deslizantes |
+| `0x404`  | `KEY[3:0]` | Leitura  | 4 botões (ativos em baixo) |
+| `0x408`  | `LEDR[17:0]`| Escrita | 18 LEDs vermelhos |
+| `0x40C`  | `LEDG[8:0]` | Escrita | 9 LEDs verdes |
+
+O acesso é feito por instruções `lw` (leitura) e `sw` (escrita) nos endereços acima. O hardware detecta automaticamente se o endereço pertence à RAM ou ao MMIO pelo **bit 10** do resultado da ALU.
+
+---
+
+## 🎮 Funcionalidade do Contador
+
+### Botões
+
+| Botão | Ação |
+|-------|------|
+| `KEY[3]` | Incrementa o contador |
+| `KEY[2]` | Decrementa o contador |
+| `KEY[1]` | Zera o contador |
+| `KEY[0]` | Reset geral (hardware) |
+
+> ⚠️ Os botões são **ativos em baixo**: valor `0` quando pressionado, `1` quando solto.
+
+### Saída
+
+O valor do contador (32 bits internamente) é exibido nos **9 bits menos significativos** dos LEDs vermelhos (`LEDR[8:0]`) em binário — LED aceso = bit 1, LED apagado = bit 0.
+
+---
+
+## 🧠 Programa Assembly
+
+### Registradores utilizados
+
+| Registrador | Conteúdo |
+|-------------|----------|
+| `x1`  | Base MMIO (`0x400`) |
+| `x2`  | Contador (32 bits) |
+| `x3`  | Leitura atual dos botões (KEY) |
+| `x4/x5/x6` | Temporários para detecção de borda |
+| `x7`  | Máscara KEY[3] = `0x8` |
+| `x8`  | Máscara KEY[2] = `0x4` |
+| `x9`  | Máscara KEY[1] = `0x2` |
+| `x10` | Máscara 9 bits = `0x1FF` |
+| `x11` | Constante `1` |
+| `x12` | Estado anterior dos botões (`prev_KEY`) |
+| `x13` | Valor do contador mascarado para display |
+
+### Instruções disponíveis
+
+O processador suporta apenas: `lw`, `sw`, `beq`, `add`, `sub`, `and`. Como não há `addi`, **todas as constantes são pré-carregadas da memória de dados** via `lw`.
+
+### Detecção de Borda
+
+Para garantir que o contador muda **apenas uma vez por aperto** (e não fica repetindo enquanto o botão está segurado):
+
+```
+prev_mascarado = prev_KEY AND mascara_botao
+curr_mascarado = curr_KEY AND mascara_botao
+diferenca = prev_mascarado - curr_mascarado
+
+# diferenca == mascara  →  botão acabou de ser pressionado (1 → 0)
+# diferenca == 0        →  nenhuma mudança
+```
+
+### Estrutura do programa
+
+```
+INIT (instr. 0–7):    carrega constantes da memória + zera contador
+UPDATE (instr. 8–10): exibe contador nos LEDs, lê estado dos botões
+CHECK (instr. 11–24): verifica KEY[3], KEY[2], KEY[1] com detecção de borda
+INC (instr. 25–27):   atualiza prev, contador++, volta ao UPDATE
+DEC (instr. 28–30):   atualiza prev, contador--, volta ao UPDATE
+ZER (instr. 31–33):   atualiza prev, contador = 0, volta ao UPDATE
+```
+
+### Código — `assembler/instructions.txt`
+
+```asm
+lw x1,0(x0)          ; x1  = 0x400 (base MMIO)
+lw x7,4(x0)          ; x7  = 8     (máscara KEY[3])
+lw x8,8(x0)          ; x8  = 4     (máscara KEY[2])
+lw x9,12(x0)         ; x9  = 2     (máscara KEY[1])
+lw x10,16(x0)        ; x10 = 0x1FF (máscara 9 bits)
+lw x12,20(x0)        ; x12 = 0xF   (prev_KEY inicial)
+lw x11,24(x0)        ; x11 = 1     (constante)
+add x2,x0,x0         ; contador = 0
+
+; UPDATE
+and x13,x2,x10       ; x13 = contador & 0x1FF
+sw x13,8(x1)         ; LEDR = x13  (endereço 0x408)
+lw x3,4(x1)          ; x3  = KEY   (endereço 0x404)
+
+; KEY[3] — incrementar
+and x4,x12,x7
+and x5,x3,x7
+sub x6,x4,x5
+beq x6,x7,44         ; se pressionado → INC
+
+; KEY[2] — decrementar
+and x4,x12,x8
+and x5,x3,x8
+sub x6,x4,x5
+beq x6,x8,40         ; se pressionado → DEC
+
+; KEY[1] — zerar
+and x4,x12,x9
+and x5,x3,x9
+sub x6,x4,x5
+beq x6,x9,36         ; se pressionado → ZER
+
+; nenhum botão pressionado
+add x12,x3,x0
+beq x0,x0,-64        ; → UPDATE
+
+; INC
+add x12,x3,x0
+add x2,x2,x11
+beq x0,x0,-76        ; → UPDATE
+
+; DEC
+add x12,x3,x0
+sub x2,x2,x11
+beq x0,x0,-88        ; → UPDATE
+
+; ZER
+add x12,x3,x0
+add x2,x0,x0
+beq x0,x0,-100       ; → UPDATE
+```
+
+---
+
+## ⚙️ Principais Conceitos Utilizados
+
+| Conceito | Aplicação no Projeto |
+|----------|----------------------|
+| MMIO | Acesso a periféricos via `lw`/`sw` em endereços especiais |
+| Edge detection | `prev_KEY` detecta a borda de descida do botão |
+| Memória de dados | Armazena constantes já que não há `addi` |
+| Branch offset | Saltos calculados manualmente em bytes relativos ao PC |
+| PLL | Converte clock de 50 MHz para 10 MHz para a CPU |
+
+---
+
+## 🔄 Como Reproduzir
+
+### 1. Montar o programa
 
 ```bash
 cd assembler
-python3 assembler.py
+python assembler.py
+# gera: assembler/instruction.mif
 ```
 
-O script gera `assembler/instruction.mif`. Cada linha corresponde a uma **palavra de 32 bits** com o seu **endereço de palavra** em hexadecimal (endereço de palavra = endereço de byte / 4):
+### 2. Compilar no Quartus
 
-```
-DEPTH = 256;
-WIDTH = 32;
-ADDRESS_RADIX = HEX;
-DATA_RADIX = HEX;
-CONTENT
-BEGIN
+- Abrir o projeto no Quartus Prime
+- Copiar `instruction.mif` e `data.mif` para a pasta do projeto
+- **Processing → Start Compilation**
 
-000 : 00002083;  -- lw x1,0(x0)
-001 : 0000A103;  -- lw x2,0(x1)
-002 : 0020A423;  -- sw x2,8(x1)
-003 : FE000CE3;  -- beq x0,x0,-8
-END;
-```
+### 3. Gravar na FPGA
 
-### 3. Copie o MIF para a raiz do projeto
+- Conectar a DE2-115 via USB-Blaster
+- **Tools → Programmer → Start**
 
-```bash
-cp assembler/instruction.mif instruction.mif
-```
+### 4. Testar
 
-O módulo `sc_imem.sv` lê `instruction.mif` via atributo de síntese:
-
-```systemverilog
-(* ram_init_file = "instruction.mif" *) logic [31:0] rom [0:255];
-```
-
-O Quartus embute o conteúdo desse arquivo no bitstream durante a compilação. Para trocar de programa, basta gerar um novo `.mif`, copiá-lo e recompilar.
-
-### 4. Memória de dados inicial
-
-Se o programa precisar de constantes pré-carregadas em `dmem` (por exemplo, o endereço base MMIO `0x400`), crie ou edite um arquivo `.mif` no mesmo formato e aponte para ele em `sc_dmem.sv`:
-
-```systemverilog
-(* ram_init_file = "meu_data.mif" *) logic [31:0] ram [0:255];
-```
-
-Exemplo de `data.mif` com o endereço base MMIO na palavra 0:
-
-```
-000 : 00000400;  -- MMIO base (lido por: lw x1, 0(x0))
-[001..0FF] : 00000000;
-```
-
-### 5. Resintetize e grave na FPGA
-
-No Quartus: **Processing → Start Compilation**, depois **Tools → Programmer**.
+| Ação | Resultado esperado |
+|------|--------------------|
+| Pressionar KEY[3] | Um LED a mais acende |
+| Pressionar KEY[2] | Um LED a menos acende |
+| Pressionar KEY[1] | Todos os LEDs apagam |
+| Pressionar KEY[0] | Reset — contador volta a 0 |
 
 ---
 
-## Organização do MMIO
+## 🧪 Simulação (ModelSim)
 
-O MMIO é implementado no módulo `sc_mmio.sv` e mapeia os periféricos físicos da DE2-115 no espaço de endereços do processador.
-
-### Decodificação de endereço
-
-A separação entre memória de dados e MMIO é feita pelo **bit 10** do resultado da ULA (endereço calculado pela instrução `lw`/`sw`):
-
-```
-alu_result[10] = 0  →  sc_dmem  (0x000 – 0x3FC, memória de dados comum)
-alu_result[10] = 1  →  sc_mmio  (0x400 – 0x40C, periféricos)
-```
-
-Dentro da janela MMIO, os bits `[3:2]` selecionam o periférico:
-
-```
-alu_result[3:2] = 00  →  0x400  SW[17:0]   (leitura)
-alu_result[3:2] = 01  →  0x404  KEY[3:0]   (leitura)
-alu_result[3:2] = 10  →  0x408  LEDR[17:0] (escrita)
-alu_result[3:2] = 11  →  0x40C  LEDG[8:0]  (escrita)
-```
-
-### Mapa de endereços
-
-| Endereço | Periférico  | Direção | Largura | Pinos DE2-115        |
-|----------|-------------|---------|---------|----------------------|
-| `0x400`  | `SW[17:0]`  | leitura | 18 bits | Chaves deslizantes   |
-| `0x404`  | `KEY[3:0]`  | leitura | 4 bits  | Botões (KEY[0] = reset) |
-| `0x408`  | `LEDR[17:0]`| escrita | 18 bits | LEDs vermelhos       |
-| `0x40C`  | `LEDG[8:0]` | escrita | 9 bits  | LEDs verdes          |
-
-### Comportamento elétrico
-
-- **Leituras** (`lw`): combinatoriais — o valor nos pinos físicos é lido no ciclo em que a instrução executa.
-- **Escritas** (`sw`): registradas — o valor é registrado no registrador de LED na borda de subida do clock do mesmo ciclo.
-- **Reset** (`KEY[0]`, ativo em baixo): `LEDR` e `LEDG` são zerados assincronamente.
-
-### Usando o MMIO no programa
-
-O endereço base `0x400` não pode ser carregado diretamente com `addi` (campo imediato de 12 bits, mas o valor tem bit 10 = 1 e parte alta zero). A solução é armazená-lo na memória de dados e carregá-lo com `lw`:
-
-```asm
-# data.mif palavra 0 = 0x00000400
-lw  x1,  0(x0)      # x1 = 0x400  (base MMIO)
-
-lw  x2,  0(x1)      # lê SW[17:0]    (addr 0x400)
-lw  x3,  4(x1)      # lê KEY[3:0]    (addr 0x404)
-sw  x2,  8(x1)      # escreve LEDR   (addr 0x408)
-sw  x3, 12(x1)      # escreve LEDG   (addr 0x40C)
-```
-
-O `MemWrite` é internamente multiplexado por `mmio_sel` para evitar que um `sw` para um endereço MMIO corrompa a memória de dados, e vice-versa:
-
-```systemverilog
-// sc_datapath.sv
-sc_dmem dmem (.MemWrite(MemWrite & ~mmio_sel), .addr(alu_result[9:2]), ...);
-sc_mmio mmio (.MemWrite(MemWrite &  mmio_sel), .addr(alu_result[3:2]), ...);
-```
-
----
-
-## Arquitetura
-
-```
-sc_top
-├── pll_10mhz          — ALTPLL: 50 MHz → 10 MHz
-└── sc_cpu
-    ├── sc_control     — Unidade de controle (decodifica opcode)
-    └── sc_datapath
-        ├── sc_imem    — Memória de instruções (256 × 32 bits)
-        ├── sc_regfile — Banco de registradores (32 × 32 bits)
-        ├── sc_sign_ext— Extensor de sinal (formatos I, S, B)
-        ├── sc_alu_ctrl— Controle da ALU
-        ├── sc_alu     — ALU de 32 bits
-        ├── sc_dmem    — Memória de dados (256 × 32 bits)
-        └── sc_mmio    — MMIO: SW, KEY, LEDR, LEDG
-```
-
-### Memórias — leitura assíncrona
-
-`sc_imem` e `sc_dmem` são implementadas como arrays SystemVerilog com leitura puramente combinacional:
-
-```systemverilog
-assign instr    = rom[addr];   // sc_imem: sem clock
-assign ReadData = ram[addr];   // sc_dmem: sem clock
-```
-
-Escritas em `sc_dmem` são síncronas na borda de subida:
-
-```systemverilog
-always @(posedge clk)
-    if (MemWrite) ram[addr] <= WriteData;
-```
-
-O Quartus infere **MLAB** (LUT-RAM) para arrays com leitura combinacional, que suportam leitura assíncrona no Cyclone IV.
-
-### Clock e reset
-
-O clock da CPU é **10 MHz**, derivado do `CLOCK_50` pelo PLL. O reset (`KEY[0]`) mantém o processador em reset até que o PLL trave (`pll_locked`), evitando execução em clock instável no boot.
-
----
-
-## Instruções suportadas
-
-### Hardware implementado (`sc_control.sv`)
-
-| Tipo   | Instrução | Opcode    |
-|--------|-----------|-----------|
-| R-type | `add`, `sub`, `and`, `or`, `slt` | `0110011` |
-| I-type | `lw`      | `0000011` |
-| S-type | `sw`      | `0100011` |
-| B-type | `beq`     | `1100011` |
-
-### Suportadas pelo assembler (requerem extensão do controle)
-
-O assembler codifica corretamente todas as instruções abaixo, mas o hardware precisaria ser estendido para executá-las:
-
-| Tipo   | Instruções |
-|--------|-----------|
-| R-type | `xor`, `sll`, `srl`, `sra`, `sltu` |
-| I-type | `addi`, `slti`, `xori`, `ori`, `andi`, `slli`, `srli`, `srai`, `jalr` |
-| S-type | `sb`, `sh` |
-| B-type | `bne`, `blt`, `bge`, `bltu`, `bgeu` |
-| U-type | `lui`, `auipc` |
-| J-type | `jal` |
-
----
-
-## Sinais de controle
-
-| Sinal    | R-type | `lw` | `sw` | `beq` |
-|----------|:------:|:----:|:----:|:-----:|
-| ALUSrc   | 0      | 1    | 1    | 0     |
-| MemtoReg | 0      | 1    | —    | —     |
-| RegWrite | 1      | 1    | 0    | 0     |
-| MemRead  | 0      | 1    | 0    | 0     |
-| MemWrite | 0      | 0    | 1    | 0     |
-| Branch   | 0      | 0    | 0    | 1     |
-| ALUOp    | `10`   | `00` | `00` | `01`  |
-
-ALUOp: `00` = força ADD (load/store), `01` = força SUB (branch), `10` = R-type (ALU ctrl decodifica funct3/funct7).
-
----
-
-## Síntese no Quartus
-
-1. Abra `quartus/riscv_single_cycle.qpf` no **Quartus Prime 21.1**.
-2. Certifique-se de que `instruction.mif` e o `.mif` de dados estão na **raiz do projeto**.
-3. Execute **Processing → Start Compilation**.
-4. Grave com **Tools → Programmer** (USB-Blaster, dispositivo EP4CE115F29C7).
-
----
-
-## Simulação no ModelSim
-
-Os arquivos `modelsim/program.hex` e `modelsim/data.hex` são carregados via `$readmemh` nos blocos `initial` (guardados por `// synthesis translate_off`).
+Para verificar o hardware antes de gravar na FPGA, rode a simulação com o programa de teste:
 
 ```bash
 cd modelsim
-
 vlog -sv ../sc_alu.sv ../sc_alu_ctrl.sv ../sc_control.sv \
          ../sc_sign_ext.sv ../sc_regfile.sv               \
          ../sc_imem.sv ../sc_dmem.sv ../sc_mmio.sv        \
@@ -268,19 +284,32 @@ vlog -sv ../sc_alu.sv ../sc_alu_ctrl.sv ../sc_control.sv \
 
 vsim work.sc_cpu_tb
 run -all
+# A saída deve bater com golden.txt — resultado: PASS
 ```
 
-O testbench imprime cada escrita no console, gera `output.txt` e compara com `golden.txt`:
+### Resultado
 
-```
-[cycle   5] REG  x1  <= 00000400
-[cycle   6] MMIO LEDR  <= 3ffff
-=== PASS: all 36 lines match ===
-```
+![Simulação ModelSim](img/modelsim.png)
 
 ---
 
-## Referências
+## 🏫 Contexto Acadêmico
 
-- Patterson, D. A.; Hennessy, J. L. *Computer Organization and Design: RISC-V Edition*. 2ª ed. Morgan Kaufmann, 2020. Capítulos 4.1–4.4.
-- [RISC-V Instruction Set Manual, Volume I: Unprivileged ISA](https://riscv.org/specifications/)
+| Campo | Informação |
+|-------|-----------|
+| Disciplina | Laboratório de Organização e Arquitetura de Computadores |
+| Instituição | Centro de Informática – UFPE (CIn) |
+| Professores | Edna Barros e Victor Medeiros |
+| Linguagem | SystemVerilog + Assembly RISC-V |
+| Ano | 2026 |
+
+---
+
+## 👥 Integrantes
+
+| Nome | E-mail |
+|------|--------|
+| Caio Agrelli  | caarr@cin.ufpe.br |
+| Lucas David   | ldlf@cin.ufpe.br  |
+| João Gustavo  | jggp@cin.ufpe.br  |
+| Thales Afonso | tadg@cin.ufpe.br  |

@@ -23,9 +23,13 @@ CONTENT
 BEGIN
 
 000 : 00000400;  -- MMIO base address
-001 : 0003FFFF;  -- all 18 LEDR bits set (written to LEDR register)
-002 : 000001FF;  -- all  9 LEDG bits set (written to LEDG register)
+001 : 00000008;  -- KEY[3] mask (increment)
+002 : 00000004;  -- KEY[2] mask (decrement)
+003 : 00000002;  -- KEY[1] mask (zero)
+004 : 000001FF;  -- 9-bit mask for LEDR display
+005 : 0000000F;  -- initial prev_KEY (all buttons released)
+006 : 00000001;  -- constant 1
 
-[003..0FF] : 00000000;
+[007..0FF] : 00000000;
 
 END;
